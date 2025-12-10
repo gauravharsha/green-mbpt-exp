@@ -103,6 +103,7 @@ namespace green::mbpt::kernels {
         MMatrixXcd Fmm(new_Fock.data() + is * _ink * _nao * _nao + ik * _nao * _nao, _nao, _nao);
         for (int ikp = 0; ikp < _nk; ++ikp) {
           int         kp = _bz_utils.symmetry().reduced_point(ikp);
+          // TODO: Here, we need to transform the dm to dm_k
           CMMatrixXcd dmm(dm.data() + is * _ink * _nao * _nao + kp * _nao * _nao, _nao, _nao);
           statistics.start("Read Coulomb Exch");
           coul_int1.read_integrals(k_ir, ikp);
@@ -110,6 +111,14 @@ namespace green::mbpt::kernels {
           if(NQ_local > 0) {
             // (Q, i, b) or conj(Q, j, a)
             coul_int1.symmetrize(v, k_ir, ikp, NQ_offset, NQ_local);
+
+            // Transform according to symmetry operation
+            if (_bz_utils.symmetry().symm_group()) {
+              // Get transformation operator index
+              MatrixXcd U_(_nao, _nao);
+              _bz_utils.symmetry().get_rotation_matrix(U_, ikp);
+              dmm = U_ * dmm * U_.adjoint();
+            }
 
             // (Qi, a) = (Qi, b) * (b, a)
             if (_bz_utils.symmetry().conj_list()[ikp] == 0) {

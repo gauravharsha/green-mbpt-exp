@@ -210,20 +210,8 @@ namespace green::mbpt::kernels {
     }
     if (_bz_utils.symmetry().symm_group()) {
       // Get transformation operator index
-      size_t op_idx = _bz_utils.symmetry().kspace_op_index()(k);
-      // Get transformation operator
-      size_t k_idx_size = _bz_utils.symmetry().n_symm_ops() * _nao * _nao;
-      size_t k_pos_in_full = _bz_utils.symmetry().reduced_to_full()[k_pos];
-      size_t op_idx_size = _nao * _nao;
-      std::cout << "k: " << k << " k_pos: " << k_pos << " k_pos_in_full: " << k_pos_in_full << " op_idx: " << op_idx
-                << std::endl;
       MatrixX<prec> U_(_nao, _nao);
-      for (size_t i = 0; i < _nao; ++i) {
-        for (size_t j = 0; j < _nao; ++j) {
-          U_(i, j) = (prec)_bz_utils.symmetry().kspace_orep()(k_pos_in_full, op_idx, i, j);
-        }
-      }
-      // find k-reduced
+      _bz_utils.symmetry().get_rotation_matrix(U_, k);
       G_k = U_ * G_k * U_.adjoint();
     }
   }
