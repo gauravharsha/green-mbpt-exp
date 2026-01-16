@@ -115,7 +115,7 @@ namespace green::mbpt::kernels {
     MPI_Win_lock_all(MPI_MODE_NOCHECK, Sigma.win());
     for (size_t k1 = 0; k1 < _ink; ++k1) {
       size_t k1_ir = _bz_utils.symmetry().full_point(k1);
-      // Loop over the degenerate points of q_ir
+      // Loop over the degenerate points of q_ir -- essentially star of q_ir
       for (size_t q_deg : _bz_utils.symmetry().deg(_bz_utils.symmetry().reduced_point(q_ir))) {
         std::array<size_t, 4> k = _bz_utils.momentum_conservation({
             {k1_ir, q_deg, 0}
@@ -344,6 +344,10 @@ namespace green::mbpt::kernels {
     _coul_int1->symmetrize(v, k[0], k[3]);
     MMatrixX<prec> vm(v.data(), _NQ * _nao, _nao);
 
+    // Obtain symmetry transformation for Pq
+    MatrixX<prec> U_k_aux(_NQ, _NQ);
+    _bz_utils.symmetry().get_rotation_matrix_aux(U_k_aux, k[1]);
+
     // #pragma omp parallel
     {
       MatrixX<prec>   G_k1q(_nao, _nao);
@@ -366,6 +370,7 @@ namespace green::mbpt::kernels {
         MMatrixXcd    P(P0_tilde.data() + t * _NQ * _NQ, _NQ, _NQ);
         MatrixX<prec> P_sp(_NQ, _NQ);
         P_sp = P.cast<prec>();
+        P_sp = U_k_aux * P_sp * U_k_aux.adjoint();
         for (size_t s = 0; s < pseudo_ns; ++s) {
           if (!_X2C) {
             assign_G(k[3], t, s, G_fermi.object(), G_k1q);
