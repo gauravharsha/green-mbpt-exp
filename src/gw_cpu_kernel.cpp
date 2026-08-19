@@ -25,6 +25,7 @@
 #include <green/mbpt/kernels.h>
 #include <green/utils/mpi_shared.h>
 #include <green/utils/mpi_utils.h>
+#include <green/h5pp/archive.h>
 
 namespace green::mbpt::kernels {
 
@@ -45,6 +46,12 @@ namespace green::mbpt::kernels {
     for (size_t q = utils::context().internode_rank; q < _inq; q += utils::context().internode_size) {
       size_t q_ir = _bz_utils.q_symmetry().full_point(q); // irreducible q-point's index in the full BZ
       selfenergy_innerloop(q_ir, g, sigma_tau, P0_tilde_s, Pw_tilde_s);
+      // DEBUG: dump P0 to HDF5
+      if (!cntx.node_rank) {
+        h5pp::archive ar("P0_dump.h5", "a");
+        ar["P0/q_" + std::to_string(q)] << P0_tilde_s.object();
+        ar.close();
+      }
     }
     statistics.end();
     statistics.start("selfenergy_reduce");
