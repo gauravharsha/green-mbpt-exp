@@ -20,6 +20,7 @@
  */
 
 #include "green/mbpt/kernels.h"
+#include <green/h5pp/archive.h>
 
 namespace green::mbpt::kernels {
   ztensor<4> hf_scalar_cpu_kernel::solve(const ztensor<4>& dm) {
@@ -80,6 +81,10 @@ namespace green::mbpt::kernels {
       }
       statistics.end();
 
+      // DEBUG: snapshot Hartree-only contribution to new_Fock (partial per rank)
+      ztensor<4> dbg_J(_ns, _ink, _nao, _nao);
+      dbg_J << new_Fock;
+
       // Exchange diagram
       ztensor<3> Y(NQ_local, _nao, _nao);
       MMatrixXcd Ym(Y.data(), NQ_local * _nao, _nao);
@@ -125,6 +130,10 @@ namespace green::mbpt::kernels {
       }
       statistics.end();
 
+      // DEBUG: snapshot J - K contribution to new_Fock (partial per rank)
+      ztensor<4> dbg_JK(_ns, _ink, _nao, _nao);
+      dbg_JK << new_Fock;
+
       statistics.start("Ewald correction");
       for (int ii = utils::context().global_rank; ii < _ns * _ink; ii += utils::context().global_size) {
         int         is = ii / _ink;
@@ -135,6 +144,28 @@ namespace green::mbpt::kernels {
         Fm -= prefactor * _madelung * Sm * dmm * Sm;
       }
       statistics.end();
+
+      // DEBUG: split-dump Hartree J, J-K, and Sigma1 = J-K-Madelung (per k), once.
+      // Snapshots are allreduced to full; Python: K = J - (J-K), Madelung = (J-K) - Sigma1.
+      // Global allreduce (multi-node safe); writes on global rank 0 only, first call.
+      {
+        static bool dbg_done = false;
+        if (!dbg_done) {
+          ztensor<4> dbg_JKM(_ns, _ink, _nao, _nao);
+          dbg_JKM << new_Fock;
+          utils::allreduce(MPI_IN_PLACE, dbg_J.data(),   dbg_J.size(),   MPI_C_DOUBLE_COMPLEX, MPI_SUM, utils::context().global);
+          utils::allreduce(MPI_IN_PLACE, dbg_JK.data(),  dbg_JK.size(),  MPI_C_DOUBLE_COMPLEX, MPI_SUM, utils::context().global);
+          utils::allreduce(MPI_IN_PLACE, dbg_JKM.data(), dbg_JKM.size(), MPI_C_DOUBLE_COMPLEX, MPI_SUM, utils::context().global);
+          if (!utils::context().global_rank) {
+            h5pp::archive ar("hf_intermediates.h5", "w");
+            ar["J"] << dbg_J;         // Hartree                     (ns, ink, nao, nao)
+            ar["JminusK"] << dbg_JK;  // J - K
+            ar["Sigma1"] << dbg_JKM;  // J - K - Madelung (= stored Sigma1)
+            ar.close();
+          }
+          dbg_done = true;
+        }
+      }
     }
     statistics.start("Reduce Fock");
     utils::allreduce(MPI_IN_PLACE, new_Fock.data(), new_Fock.size(), MPI_C_DOUBLE_COMPLEX, MPI_SUM, utils::context().global);
