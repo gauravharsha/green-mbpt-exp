@@ -26,6 +26,7 @@
 #include <green/utils/mpi_shared.h>
 #include <green/utils/mpi_utils.h>
 #include <green/h5pp/archive.h>
+#include <type_traits>
 
 namespace green::mbpt::kernels {
 
@@ -307,6 +308,7 @@ namespace green::mbpt::kernels {
     size_t k1q_pos               = _bz_utils.k_symmetry().reduced_point(k1_k1mq[1]);
     auto [tau_local, tau_offset] = compute_local_and_offset_node_comm(_nts);
     auto&           Sigma_fermi  = Sigma_fermi_s.object();
+    auto            cntx         = Sigma_fermi_s.cntx();  // DEBUG: for intermediate dump guard
 
     size_t          k1_pos       = _bz_utils.k_symmetry().reduced_point(k1_k1mq[0]);
     // (Q, i, m) or (Q', j, n)*
@@ -348,6 +350,25 @@ namespace green::mbpt::kernels {
           size_t b  = s % pns;          // col spin-block index
           G_k1q = G_k1q_full[is].block(a * _nao, b * _nao, _nao, _nao);
           selfenergy_contraction(G_k1q, vm, Y1m, Y1mm, Y2mm, X2m, Y2mmm, X2mm, P_sp, Sigma_ts);
+          // DEBUG: dump eval_selfenergy intermediates (v, G, P, Sigma) per q at a fixed (k1, t, s).
+          // Compiled only in the double-precision instantiation. Single node only (each node's
+          // node_rank 0 would otherwise race on the same file). Run with --itermax 1 (paths are
+          // rewritten each GW iteration). Selectors below are easy to edit.
+          if constexpr (std::is_same_v<prec, std::complex<double>>) {
+            const size_t DBG_K1 = 0, DBG_T = 0, DBG_S = 0;
+            if (k1_k1mq[0] == DBG_K1 && t == DBG_T && s == DBG_S && !cntx.node_rank) {
+              ztensor<2> Pd(_NQ, _NQ);   MMatrixXcd Pm(Pd.data(), _NQ, _NQ);   Pm = P_sp;
+              ztensor<2> Gd(_nao, _nao); MMatrixXcd Gm(Gd.data(), _nao, _nao); Gm = G_k1q;
+              ztensor<2> Sd(_nao, _nao); MMatrixXcd Sm(Sd.data(), _nao, _nao); Sm = Sigma_ts;
+              h5pp::archive ar("sigma_intermediates.h5", "a");
+              std::string  grp = "q" + std::to_string(q_idx) + "_kmq" + std::to_string(k1_k1mq[1]);
+              ar[grp + "/v"] << v;   // (NQ, nao, nao)  integrals for (k1, k1-q)
+              ar[grp + "/P"] << Pd;  // (NQ, NQ)        screened polarization at BZ q
+              ar[grp + "/G"] << Gd;  // (nao, nao)      G(k1-q, tau)
+              ar[grp + "/Sigma"] << Sd;  // (nao, nao)  per-contribution self-energy
+              ar.close();
+            }
+          }
           // sigma_shift locates the start of the nso x nso Sigma matrix for
           // tau index t, spin is, and k-point k1_pos in the flat array
           // Sigma[nts, ns, ink, nso, nso]. The (a,b) spin block then receives
